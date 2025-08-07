@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Municipality Visit Submissions</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <link rel="stylesheet" href="https://cdn.datatables.net/1.13.6/css/jquery.dataTables.min.css">
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 10px;
+      padding: 10px;
+    }
+
+    h2 {
+      margin-bottom: 20px;
+      text-align: center;
+    }
+
+    table.dataTable th,
+    table.dataTable td {
+      white-space: nowrap;
+    }
+
+    .dataTables_wrapper {
+      overflow-x: auto;
+    }
+
+    table {
+      width: 100% !important;
+    }
+
+    thead input {
+      width: 100%;
+      box-sizing: border-box;
+    }
+
+    @media (max-width: 768px) {
+      body {
+        font-size: 14px;
+      }
+
+      table.dataTable th,
+      table.dataTable td {
+        padding: 6px 10px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <h2>Municipality Visit Submissions</h2>
+  <div class="table-container">
+    <table id="submissionsTable" class="display">
+      <thead>
+        <tr>
+          <th>Site Visit Date</th>
+          <th>Submitted By</th>
+          <th>Municipality Visited</th>
+          <th>Primary Contact - Name</th>
+          <th>Primary Contact - Email</th>
+          <th>Role/Title</th>
+          <th>Topics Discussed / Notes</th>
+          <th>Resources Interested In</th>
+          <th>Any Concerns to Flag for Matt</th>
+          <th>Concerns</th>
+        </tr>
+        <tr>
+          <th><input type="text" placeholder="Search..." /></th>
+          <th><input type="text" placeholder="Search..." /></th>
+          <th><input type="text" placeholder="Search..." /></th>
+          <th><input type="text" placeholder="Search..." /></th>
+          <th><input type="text" placeholder="Search..." /></th>
+          <th><input type="text" placeholder="Search..." /></th>
+          <th><input type="text" placeholder="Search..." /></th>
+          <th><input type="text" placeholder="Search..." /></th>
+          <th><input type="text" placeholder="Search..." /></th>
+          <th><input type="text" placeholder="Search..." /></th>
+        </tr>
+      </thead>
+      <tbody id="tableBody"></tbody>
+    </table>
+  </div>
+
+  <script src="https://code.jquery.com/jquery-3.7.0.min.js"></script>
+  <script src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
+
+  <script>
+    const apiKey = "8a9c3433da9695f90a56fd9b07659fcd";
+    const formID = "251826077440053";
+
+    const fieldsToExtract = [
+      { label: "Site Visit Date", key: "siteVisit" },
+      { label: "Submitted By", key: "submittedBy" },
+      { label: "Municipality Visited", key: "municipalityVisited" },
+      { label: "Primary Contact - Name", key: "primaryContactname" },
+      { label: "Primary Contact - Email", key: "primaryPoint" },
+      { label: "Role/Title", key: "roletitle" },
+      { label: "Topics Discussed / Notes", key: "topicsDiscussed" },
+      { label: "Resources Interested In", key: "resourcesThe" },
+      { label: "Any Concerns to Flag for Matt", key: "anyConcerns" },
+      { label: "Concerns", key: "concerns" }
+    ];
+
+    fetch(`https://api.jotform.com/form/${formID}/submissions?apiKey=${apiKey}`)
+      .then(response => response.json())
+      .then(data => {
+        const submissions = data.content;
+        const tbody = document.getElementById("tableBody");
+
+        submissions.forEach(sub => {
+          const row = document.createElement("tr");
+          fieldsToExtract.forEach(field => {
+            const td = document.createElement("td");
+            const answers = sub.answers || {};
+            const match = Object.values(answers).find(a => a.name === field.key);
+            td.textContent = match ? (match.prettyFormat || match.answer || "") : "";
+            row.appendChild(td);
+          });
+          tbody.appendChild(row);
+        });
+
+        $('#submissionsTable').DataTable({
+          pageLength: 25,
+          initComplete: function () {
+            this.api().columns().every(function () {
+              const that = this;
+              $('input', this.header()).on('keyup change clear', function () {
+                if (that.search() !== this.value) {
+                  that.search(this.value).draw();
+                }
+              });
+            });
+          }
+        });
+      })
+      .catch(err => {
+        console.error("Error loading submissions:", err);
+        const tbody = document.getElementById("tableBody");
+        const row = document.createElement("tr");
+        const td = document.createElement("td");
+        td.colSpan = fieldsToExtract.length;
+        td.textContent = "Error loading data.";
+        row.appendChild(td);
+        tbody.appendChild(row);
+      });
+  </script>
+</body>
+</html>

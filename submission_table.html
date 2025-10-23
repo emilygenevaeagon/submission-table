@@ -9,18 +9,25 @@
   <style>
     body { font-family: Arial, sans-serif; margin:10px; padding:10px; }
     h2 { margin-bottom:20px; text-align:center; }
-    table.dataTable th, table.dataTable td { white-space: nowrap; }
     .dataTables_wrapper { overflow-x:auto; }
     table { width:100% !important; }
+    table.dataTable th, table.dataTable td { white-space: nowrap; }
     thead input { width:100%; box-sizing:border-box; }
-    @media (max-width: 768px){
-      body { font-size:14px; }
+    #debug { font:12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+             white-space:pre-wrap; background:#f6f8fa; border:1px solid #e5e7eb;
+             padding:10px; margin:12px 0; border-radius:6px; }
+    @media (max-width:768px){
+      body{font-size:14px}
       table.dataTable th, table.dataTable td { padding:6px 10px; }
     }
   </style>
 </head>
 <body>
   <h2>Municipality Visit Submissions</h2>
+
+  <!-- Inline debug panel so you can diagnose directly on GitHub Pages -->
+  <div id="debug">Debug log:</div>
+
   <div class="table-container">
     <table id="submissionsTable" class="display">
       <thead>
@@ -49,7 +56,7 @@
           <th><input type="text" placeholder="Search..." /></th>
         </tr>
       </thead>
-      <tbody id="tableBody"></tbody>
+      <tbody></tbody>
     </table>
   </div>
 
@@ -57,91 +64,101 @@
   <script src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
 
   <script>
-    // ⚠️ Best practice: DO NOT ship your API key to the browser.
-    // Use a serverless proxy and read the key from server-side env vars.
-    const apiKey = "8a9c3433da9695f90a56fd9b07659fcd";
-    const formID = "251826077440053";
+    // ⚠️ This key will be visible to anyone viewing source — for internal testing only
+    const API_KEY = "8a9c3433da9695f90a56fd9b07659fcd";
+    const FORM_ID = "251826077440053";
 
-    // Map to your Jotform field "Unique Name" values EXACTLY.
-    // After first run, open DevTools console to see the actual names and adjust as needed.
-    const fieldsToExtract = [
-      { label: "Site Visit Date", key: "siteVisit" },
-      { label: "Submitted By", key: "submittedBy" },
-      { label: "Municipality Visited", key: "municipalityVisited" },
-      { label: "Primary Contact - Name", key: "primaryContactname" }, // verify exact casing!
-      { label: "Primary Contact - Email", key: "primaryPoint" },      // verify
-      { label: "Role/Title", key: "roletitle" },                      // verify
-      { label: "Topics Discussed / Notes", key: "topicsDiscussed" },
-      { label: "Resources Interested In", key: "resourcesThe" },
-      { label: "Any Concerns to Flag for Matt", key: "anyConcerns" },
-      { label: "Concerns", key: "concerns" }
+    // Map to EXACT Jotform field Unique Names (a.name). Adjust after you see debug output.
+    const FIELD_KEYS = [
+      "siteVisit",
+      "submittedBy",
+      "municipalityVisited",
+      "primaryContactname", // verify casing
+      "primaryPoint",       // verify
+      "roletitle",          // verify
+      "topicsDiscussed",
+      "resourcesThe",
+      "anyConcerns",
+      "concerns"
     ];
 
-    async function fetchAllSubmissions() {
-      const base = `https://api.jotform.com/form/${formID}/submissions`;
-      const params = new URLSearchParams({
-        apiKey: apiKey,
-        orderby: "created_at",
-        direction: "DESC",
-        limit: "1000",       // pull a lot; adjust if needed
-        offset: "0"
-      });
+    const dbg = (m, obj) => {
+      const el = document.getElementById("debug");
+      el.textContent += "\n" + m + (obj ? " " + JSON.stringify(obj, null, 2) : "");
+    };
 
+    async function fetchAllSubmissions() {
+      const base = `https://api.jotform.com/form/${FORM_ID}/submissions`;
+      const limit = 1000;
       let all = [];
       let offset = 0;
-      const limit = 1000;
 
       while (true) {
-        params.set("offset", String(offset));
-        const res = await fetch(`${base}?${params.toString()}`);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const json = await res.json();
+        const qs = new URLSearchParams({
+          apiKey: API_KEY,
+          orderby: "created_at",
+          direction: "DESC",
+          limit: String(limit),
+          offset: String(offset),
+          "_": String(Date.now())
+        });
+        const url = `${base}?${qs.toString()}`;
+        dbg("Requesting:", url);
 
-        // Basic error check
-        if (!json || json.responseCode !== 200) {
-          throw new Error(`Jotform error: ${json?.message || "Unknown error"}`);
+        const res = await fetch(url);
+        dbg("HTTP status:", { status: res.status });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+        const json = await res.json();
+        dbg("Jotform responseCode/message:", { responseCode: json.responseCode, message: json.message });
+
+        if (json.responseCode !== 200) {
+          throw new Error(json.message || "Jotform API error");
         }
 
         const chunk = json.content || [];
         all = all.concat(chunk);
+        dbg("Fetched chunk:", { count: chunk.length, total: all.length });
 
-        // If we received less than limit, we're done
         if (chunk.length < limit) break;
         offset += limit;
+      }
+
+      if (all.length && all[0].answers) {
+        const names = Object.values(all[0].answers).map(a => a.name);
+        dbg("First submission field names:", names);
       }
       return all;
     }
 
-    function buildTableRows(submissions) {
-      const tbody = document.getElementById("tableBody");
-      tbody.innerHTML = "";
-
-      // Debug: log the first submission's answer keys so you can verify "key" names
-      if (submissions.length) {
-        const first = submissions[0];
-        const names = Object.values(first.answers || {}).map(a => a.name);
-        console.log("First submission field 'name' values:", names);
+    function toRowArray(sub) {
+      const answers = sub.answers || {};
+      const byName = {};
+      for (const k in answers) {
+        const a = answers[k];
+        if (a && a.name) byName[a.name] = a.prettyFormat || a.answer || "";
       }
-
-      submissions.forEach(sub => {
-        const row = document.createElement("tr");
-        const answers = sub.answers || {};
-
-        fieldsToExtract.forEach(field => {
-          const td = document.createElement("td");
-          const match = Object.values(answers).find(a => a.name === field.key);
-          td.textContent = match ? (match.prettyFormat || match.answer || "") : "";
-          row.appendChild(td);
-        });
-
-        tbody.appendChild(row);
-      });
+      return FIELD_KEYS.map(name => byName[name] || "");
     }
 
-    function initDataTable() {
-      const dt = $('#submissionsTable').DataTable({
+    function initTable(dataRows) {
+      const table = $('#submissionsTable').DataTable({
+        data: dataRows,
+        columns: [
+          { title: "Site Visit Date" },
+          { title: "Submitted By" },
+          { title: "Municipality Visited" },
+          { title: "Primary Contact - Name" },
+          { title: "Primary Contact - Email" },
+          { title: "Role/Title" },
+          { title: "Topics Discussed / Notes" },
+          { title: "Resources Interested In" },
+          { title: "Any Concerns to Flag for Matt" },
+          { title: "Concerns" },
+        ],
         pageLength: 25,
-        destroy: true, // allow re-init if we later refresh
+        deferRender: true,
+        order: [],
         initComplete: function () {
           this.api().columns().every(function () {
             const that = this;
@@ -153,37 +170,31 @@
           });
         }
       });
-      return dt;
+      return table;
     }
 
-    async function load() {
+    (async function main() {
       try {
+        dbg("Page loaded at:", new Date().toISOString());
         const subs = await fetchAllSubmissions();
-        buildTableRows(subs);
-        initDataTable();
+        dbg("Total submissions:", subs.length);
+
+        const rows = subs.map(toRowArray);
+        dbg("Table rows prepared:", rows.length);
+
+        initTable(rows);
+        dbg("DataTable initialized.");
       } catch (err) {
-        console.error("Error loading submissions:", err);
-        const tbody = document.getElementById("tableBody");
-        const row = document.createElement("tr");
+        dbg("Error:", { message: String(err) });
+        const tbody = document.querySelector("#submissionsTable tbody");
+        const tr = document.createElement("tr");
         const td = document.createElement("td");
-        td.colSpan = fieldsToExtract.length;
-        td.textContent = "Error loading data.";
-        row.appendChild(td);
-        tbody.appendChild(row);
+        td.colSpan = FIELD_KEYS.length;
+        td.textContent = "Error loading data. See debug log above.";
+        tr.appendChild(td);
+        tbody.appendChild(tr);
       }
-    }
-
-    load();
-
-    // Optional: auto-refresh every 5 minutes (avoids reloading page)
-    // setInterval(async () => {
-    //   const subs = await fetchAllSubmissions();
-    //   const table = $('#submissionsTable').DataTable();
-    //   table.clear();
-    //   buildTableRows(subs);
-    //   table.rows.add($('#tableBody tr')).draw();
-    // }, 5 * 60 * 1000);
+    })();
   </script>
 </body>
 </html>
-

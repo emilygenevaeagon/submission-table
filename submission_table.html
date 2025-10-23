@@ -4,11 +4,11 @@
   <meta charset="UTF-8" />
   <title>Municipality Visit Submissions</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-
   <link rel="stylesheet" href="https://cdn.datatables.net/1.13.6/css/jquery.dataTables.min.css" />
   <style>
     body { font-family: Arial, sans-serif; margin: 10px; padding: 10px; }
-    h2 { margin-bottom: 20px; text-align: center; }
+    h2 { margin-bottom: 6px; text-align: center; }
+    #loadStatus { text-align:center; margin-bottom: 14px; font-size: 14px; color: #444; }
     table.dataTable th, table.dataTable td { white-space: nowrap; }
     .dataTables_wrapper { overflow-x: auto; }
     table { width: 100% !important; }
@@ -21,6 +21,8 @@
 </head>
 <body>
   <h2>Municipality Visit Submissions</h2>
+  <div id="loadStatus">Loading…</div>
+
   <div class="table-container">
     <table id="submissionsTable" class="display" style="width:100%">
       <thead>
@@ -57,7 +59,7 @@
   <script src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
 
   <script>
-    // ⚠️ Consider moving this call server-side; your API key is exposed in client code.
+    // ⚠️ Your API key is exposed client-side. Consider proxying later.
     const apiKey = "f2d64decc67aacead7b246e06213f75d";
     const formID = "251826077440053";
 
@@ -74,31 +76,6 @@
       { label: "Concerns", key: "concerns" }
     ];
 
-    // Fetch every page of submissions (limit + offset pagination)
-    async function fetchAllSubmissions() {
-      const limit = 1000; // Jotform max per call
-      let offset = 0;
-      let all = [];
-
-      while (true) {
-        const url =
-          `https://api.jotform.com/form/${formID}/submissions` +
-          `?apiKey=${encodeURIComponent(apiKey)}` +
-          `&limit=${limit}` +
-          `&offset=${offset}` +
-          `&orderby=created_at` +
-          `&direction=DESC`;
-        const res = await fetch(url);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const json = await res.json();
-        const batch = json?.content || [];
-        all = all.concat(batch);
-        if (batch.length < limit) break; // no more pages
-        offset += limit;
-      }
-      return all;
-    }
-
     function getAnswerByKey(answersObj, key) {
       if (!answersObj) return null;
       return Object.values(answersObj).find(a => a.name === key) || null;
@@ -109,11 +86,69 @@
       return isNaN(d) ? "" : d.toISOString();
     }
 
+    async function wait(ms) {
+      return new Promise(r => setTimeout(r, ms));
+    }
+
+    // Robust pagination that stops when we've reached resultSet.total
+    async function fetchAllSubmissions() {
+      const limit = 1000; // Jotform per-call max
+      let offset = 0;
+      const all = [];
+      const seenIds = new Set();
+
+      while (true) {
+        const url =
+          `https://api.jotform.com/form/${formID}/submissions` +
+          `?apiKey=${encodeURIComponent(apiKey)}` +
+          `&limit=${limit}` +
+          `&offset=${offset}`;
+
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const json = await res.json();
+
+        const batch = json?.content || [];
+        const rs = json?.resultSet || {};
+        const total = rs.total ?? undefined;
+        const count = rs.count ?? batch.length;
+
+        // Append, dedupe by id
+        for (const s of batch) {
+          if (!seenIds.has(s.id)) {
+            seenIds.add(s.id);
+            all.push(s);
+          }
+        }
+
+        // Update status
+        const statusEl = document.getElementById("loadStatus");
+        statusEl.textContent = `Loaded ${all.length}${total ? ` of ${total}` : ""}…`;
+
+        console.log("Fetched page", { offset, limit, count, total, accumulated: all.length });
+
+        // Stop when:
+        // 1) fewer than limit returned, OR
+        // 2) resultSet says we've hit or exceeded total
+        if (count < limit) break;
+        if (typeof total === "number" && (offset + count) >= total) break;
+
+        offset += limit;
+        // small delay to be nice to the API
+        await wait(200);
+      }
+
+      return all;
+    }
+
     (async function init() {
       try {
         const submissions = await fetchAllSubmissions();
-        const tbody = document.getElementById("tableBody");
 
+        // Sort client-side by created_at (newest first)
+        submissions.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+        const tbody = document.getElementById("tableBody");
         submissions.forEach(sub => {
           const row = document.createElement("tr");
 
@@ -122,8 +157,8 @@
             const match = getAnswerByKey(sub.answers, field.key);
             let val = match ? (match.prettyFormat || match.answer || "") : "";
 
-            // For the Site Visit Date column, fall back to created_at if empty
-            // and set data-order with an ISO timestamp so DataTables can sort cleanly.
+            // For date column, fall back to submission created_at if field blank,
+            // and provide sortable ISO in data-order.
             if (field.key === "siteVisit") {
               if (!val) val = sub.created_at || "";
               const iso = toISODate(val);
@@ -138,6 +173,8 @@
 
           tbody.appendChild(row);
         });
+
+        $('#loadStatus').textContent = "";
 
         const table = $('#submissionsTable').DataTable({
           pageLength: 25,
@@ -154,6 +191,10 @@
           });
         });
 
+        // Final status line
+        const statusEl = document.getElementById("loadStatus");
+        statusEl.textContent = `Loaded ${submissions.length} submissions.`;
+
       } catch (err) {
         console.error("Error loading submissions:", err);
         const tbody = document.getElementById("tableBody");
@@ -163,6 +204,9 @@
         td.textContent = "Error loading data.";
         row.appendChild(td);
         tbody.appendChild(row);
+
+        const statusEl = document.getElementById("loadStatus");
+        statusEl.textContent = "Error loading data.";
       }
     })();
   </script>
